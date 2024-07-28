@@ -1,13 +1,21 @@
 use clap::{ArgMatches, Parser};
+use datafusion::datasource::file_format::file_compression_type::FileCompressionType;
 
 use crate::{CmdExector, ReplContext, ReplMsg};
 
 #[derive(Debug, Clone)]
 pub enum DatasetConn {
     Postgres(String),
-    Csv(String),
+    Csv(FileOpts),
     Parquet(String),
-    NdJson(String),
+    NdJson(FileOpts),
+}
+
+#[derive(Debug, Clone)]
+pub struct FileOpts {
+    pub filename: String,
+    pub ext: String,
+    pub compression: FileCompressionType,
 }
 
 #[derive(Debug, Parser)]
@@ -45,16 +53,52 @@ pub fn connect(
 }
 
 fn verify_conn_str(s: &str) -> Result<DatasetConn, String> {
+    let conn_str = s.to_string();
     if s.starts_with("postgres://") {
-        Ok(DatasetConn::Postgres(s.to_string()))
-    } else if s.ends_with(".csv") {
-        Ok(DatasetConn::Csv(s.to_string()))
-    } else if s.ends_with(".parquet") {
-        Ok(DatasetConn::Parquet(s.to_string()))
-    } else if s.ends_with(".ndjson") {
-        Ok(DatasetConn::NdJson(s.to_string()))
-    } else {
-        Err("Invalid connection string".to_string())
+        return Ok(DatasetConn::Postgres(conn_str));
+    }
+    if s.ends_with(".parquet") {
+        return Ok(DatasetConn::Parquet(s.to_string()));
+    }
+
+    let exts = conn_str.split('.').rev().collect::<Vec<_>>();
+    let len = exts.len();
+    let mut exts = exts.into_iter().take(len - 1);
+    let ext1 = exts.next();
+    let ext2 = exts.next();
+    match (ext1, ext2) {
+        (Some(ext1), Some(ext2)) => {
+            let compression = match ext1 {
+                "gz" => FileCompressionType::GZIP,
+                "bz2" => FileCompressionType::BZIP2,
+                "xz" => FileCompressionType::XZ,
+                "zst" => FileCompressionType::ZSTD,
+                v => return Err(format!("Unsupported compression type: {}", v)),
+            };
+            let opts = FileOpts {
+                filename: s.to_string(),
+                ext: ext2.to_string(),
+                compression,
+            };
+            match ext2 {
+                "csv" => Ok(DatasetConn::Csv(opts)),
+                "json" | "jsonl" | "ndjson" => Ok(DatasetConn::NdJson(opts)),
+                v => Err(format!("Unsupported file type: {}", v)),
+            }
+        }
+        (Some(ext1), None) => {
+            let opts = FileOpts {
+                filename: s.to_string(),
+                ext: ext1.to_string(),
+                compression: FileCompressionType::UNCOMPRESSED,
+            };
+            match ext1 {
+                "csv" => Ok(DatasetConn::Csv(opts)),
+                "json" | "jsonl" | "ndjson" => Ok(DatasetConn::NdJson(opts)),
+                v => Err(format!("Unsupported file extension: {}", v)),
+            }
+        }
+        _ => Err(format!("Invalid file path: {}", conn_str)),
     }
 }
 
