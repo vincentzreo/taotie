@@ -97,13 +97,7 @@ impl ReplContext {
             eprintln!("Repl Send Error: {}", e);
             process::exit(1);
         }
-        match rx.recv() {
-            Ok(ret) => Some(ret),
-            Err(e) => {
-                eprintln!("Repl Receive Error: {}", e);
-                process::exit(1);
-            }
-        }
+        rx.recv().ok()
     }
 }
 
